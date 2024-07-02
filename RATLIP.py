@@ -17,18 +17,18 @@ class CLIP_Adapter(nn.Module):
             self.FBlocks.append(M_Block_RAT(out_ch, mid_ch, out_ch, cond_dim, k, s, p, hidden_size))
             
         self.conv_fuse = nn.Conv2d(out_ch, CLIP_ch, 5, 1, 2)
-        self.toclip = nn.Sequential(
-            nn.ConvTranspose2d(512, 256, 3, 2, 1, 1),
-            nn.BatchNorm2d(256),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.ConvTranspose2d(256, 128, 3, 2, 1, 1),
-            nn.BatchNorm2d(128),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.ConvTranspose2d(128, 64, 3, 2, 1, 1),
-            nn.BatchNorm2d(64),
-            nn.Sigmoid(),
-        )
-        self.CLIP = CLIP
+        # self.toclip = nn.Sequential(
+        #     nn.ConvTranspose2d(512, 256, 3, 2, 1, 1),
+        #     nn.BatchNorm2d(256),
+        #     nn.LeakyReLU(0.2, inplace=True),
+        #     nn.ConvTranspose2d(256, 128, 3, 2, 1, 1),
+        #     nn.BatchNorm2d(128),
+        #     nn.LeakyReLU(0.2, inplace=True),
+        #     nn.ConvTranspose2d(128, 64, 3, 2, 1, 1),
+        #     nn.BatchNorm2d(64),
+        #     nn.Sigmoid(),
+        # )
+        # self.CLIP = CLIP
         self.conv = nn.Conv2d(512, G_ch, 5, 1, 2)
 
     def forward(self,out,c):
@@ -91,6 +91,7 @@ class NetD(nn.Module):
         self.DBlocks = nn.ModuleList([
             D_Block(512, 512, 3, 1, 1, res=True, CLIP_feat=True),
             D_Block(512, 512, 3, 1, 1, res=True, CLIP_feat=True),
+            D_Block(512, 512, 3, 1, 1, res=True, CLIP_feat=True),
         ])
         
         self.main = D_Block(512, 512, 3, 1, 1, res=True, CLIP_feat=False)
@@ -103,6 +104,7 @@ class NetD(nn.Module):
             nn.Sequential(
                 Conv(256, 512, 3, 2, 1)
             ),
+            nn.Identity(),
             nn.Identity()
         ])
 

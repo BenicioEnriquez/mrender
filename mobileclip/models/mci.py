@@ -842,7 +842,7 @@ class FastViT(nn.Module):
 
     def forward_tokens(self, x: torch.Tensor, gen=False) -> torch.Tensor:
         features = []
-        selfeats = [1, 3, 5]
+        selfeats = [1, 3, 5, 7]
         for i, block in enumerate(self.network):
             # print(x.min().item(), x.max().item())
             x = block(x)

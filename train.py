@@ -5,8 +5,9 @@ import torch.optim as optim
 import torch.nn.functional as F
 import numpy as np
 from torch.utils.data import DataLoader
-from torchvision import transforms
+from torchvision.transforms import v2 as T
 from PIL import Image
+import time
 
 import mobileclip
 from RATLIP import NetG, NetC, NetD
@@ -22,7 +23,7 @@ cdim = 512
 
 # Training Params
 epochs = 100
-loadpt = 1
+loadpt = -1
 
 clip, _, preprocess = mobileclip.create_model_and_transforms(f'mobileclip_s0', pretrained=f'./models/mobileclip_s0.pt')
 clip = clip.to(device, dtype=dtype)
@@ -35,7 +36,16 @@ for p in clip.text_encoder.parameters():
     p.requires_grad = False
 clip.text_encoder.eval()
 
-dataset = ImageSet("C:/Datasets/MSCOCO/train2017", preprocess)
+tforms = T.Compose([
+    T.ToImage(),
+    T.RandomResizedCrop(256),
+    T.RandomHorizontalFlip(),
+    T.ColorJitter(brightness=0.5, contrast=0.5, saturation=0.5, hue=0.5),
+    T.RandomAffine(degrees=30, translate=(0.1, 0.1), scale=(0.5, 1.5)),
+    T.ToDtype(dtype, scale=True)
+])
+
+dataset = ImageSet("C:/Datasets/MSCOCO/train2017", tforms)
 dataloader = DataLoader(dataset, batch_size=8, shuffle=True)
 
 netG = NetG(64, zdim, cdim, imsize, clip).to(device, dtype=dtype)
@@ -51,8 +61,8 @@ print("G:", np.sum([p.numel() for p in netG.parameters()]).item()/10**6)
 print("D:", np.sum([p.numel() for p in netD.parameters()]).item()/10**6)
 print("C:", np.sum([p.numel() for p in netC.parameters()]).item()/10**6)
 
-optimizerG = optim.Adam(netG.parameters(), lr=0.0001, betas=(0.0, 0.9))
-optimizerD = optim.Adam(list(netD.parameters()) + list(netC.parameters()), lr=0.0004, betas=(0.0, 0.9))
+optimizerG = optim.NAdam(netG.parameters(), lr=0.0001, betas=(0.0, 0.9))
+optimizerD = optim.NAdam(list(netD.parameters()) + list(netC.parameters()), lr=0.0004, betas=(0.0, 0.9))
 scalerG = torch.cuda.amp.GradScaler()
 scalerD = torch.cuda.amp.GradScaler()
 
@@ -76,6 +86,8 @@ def MAGP(img, sent, out, scaler):
         d_loss_gp =  2.0 * torch.mean((grad_l2norm) ** 6)
     return d_loss_gp
 
+t = time.time()
+
 for epoch in range(epochs):
     for i, images in enumerate(dataloader):
 
@@ -98,11 +110,13 @@ for epoch in range(epochs):
 
             noise = torch.randn(batch_size, zdim).to(device)
             fake = netG(noise, rembeds)
+
             ffeats, fembeds = clip.encode_image(fake, features=True)
             fexfts, _ = netD(ffeats)
             floss = torch.mean(F.relu(1. + netC(fexfts, rembeds)))
 
         ploss = MAGP(pfeats, rembeds, closs, scalerD)
+
         with torch.cuda.amp.autocast():
             dloss = rloss + (floss + mloss) / 2.0 + ploss
         scalerD.scale(dloss).backward(retain_graph=True)
@@ -128,8 +142,9 @@ for epoch in range(epochs):
             scalerG.update(16384.0)
         
         if i % 50 == 0:
-            print(f"[Epoch {epoch}/{epochs}] [Batch {i}/{len(dataloader)}] [D loss: {dloss.item()}] [G loss: {gloss.item()}] [CLIP: {torch.cosine_similarity(fembeds, rembeds).mean().item()}]")
-            transforms.ToPILImage()(netG(tnoise, tembed)[0]).save(f"./results/{epoch}-{i}.png")
+            print(f"[Epoch {epoch}/{epochs}] [Batch {i}/{len(dataloader)}] [D loss: {dloss.item()}] [G loss: {gloss.item()}] [CLIP: {torch.cosine_similarity(fembeds, rembeds).mean().item()}] [Time: {time.time() - t}s]")
+            T.ToPILImage()(netG(tnoise, tembed)[0]).save(f"./results/{epoch}-{i}.png")
             torch.save(netG, f"./models/netG_{epoch}.pth")
             torch.save(netD, f"./models/netD_{epoch}.pth")
             torch.save(netC, f"./models/netC_{epoch}.pth")
+            t = time.time()
