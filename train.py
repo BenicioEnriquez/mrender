@@ -25,7 +25,7 @@ zdim = 100
 cdim = 512
 
 # Training Params
-batchsize = 12
+batchsize = 8
 epochs = 100
 loadpt = -1
 
@@ -42,19 +42,17 @@ clip.text_encoder.eval()
 
 tform = T.Compose([
     T.ToImage(),
-    T.RandomRotation(degrees=180, expand=True, fill=0.5),
     T.RandomResizedCrop(256),
     T.RandomHorizontalFlip(),
-    T.ColorJitter(brightness=0.5, contrast=0.5, saturation=0.5, hue=0.5),
     T.ToDtype(dtype, scale=True)
 ])
 
-dataset = ImageSet("C:/Datasets/MSCOCO/train2017", tform)
+dataset = ImageSet("C:/Datasets/Imagenet/data/train", tform)
 dataloader = DataLoader(dataset, batch_size=batchsize, shuffle=True, pin_memory=True)
 
-netG = NetG(64, zdim, cdim, imsize, clip).to(device, dtype=dtype)
-netD = NetD().to(device, dtype=dtype)
-netC = NetC(cdim).to(device, dtype=dtype)
+netG = torch.compile(NetG(64, zdim, cdim, imsize, clip).to(device, dtype=dtype))
+netD = torch.compile(NetD().to(device, dtype=dtype))
+netC = torch.compile(NetC(cdim).to(device, dtype=dtype))
 
 if loadpt > -1:
     netG.load_state_dict(torch.load(f'./models/netG_{loadpt}.pth').state_dict())
