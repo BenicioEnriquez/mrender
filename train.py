@@ -27,7 +27,7 @@ cdim = 512
 # Training Params
 batchsize = 12
 epochs = 100
-loadpt = -1
+loadpt = 2
 
 clip, _, preprocess = mobileclip.create_model_and_transforms(f'mobileclip_s0', pretrained=f'./models/mobileclip_s0.pt')
 clip = clip.to(device, dtype=dtype)
@@ -42,14 +42,12 @@ clip.text_encoder.eval()
 
 tform = T.Compose([
     T.ToImage(),
-    T.RandomRotation(degrees=180, expand=True, fill=0.5),
     T.RandomResizedCrop(256),
     T.RandomHorizontalFlip(),
-    T.ColorJitter(brightness=0.5, contrast=0.5, saturation=0.5, hue=0.5),
     T.ToDtype(dtype, scale=True)
 ])
 
-dataset = ImageSet("C:/Datasets/MSCOCO/train2017", tform)
+dataset = ImageSet(r"C:\Users\moben\.cache\huggingface\datasets\lca", tform)
 dataloader = DataLoader(dataset, batch_size=batchsize, shuffle=True, pin_memory=True)
 
 netG = NetG(64, zdim, cdim, imsize, clip).to(device, dtype=dtype)
