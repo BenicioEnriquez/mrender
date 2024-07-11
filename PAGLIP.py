@@ -8,7 +8,7 @@ from fightingcv_attention.attention.ShuffleAttention import *
 class CLIP_Adapter(nn.Module):
     # map_num :M_Blk_num
     def __init__(self, in_ch, mid_ch, out_ch, G_ch, CLIP_ch, 
-                 cond_dim, k, s, p, map_num, CLIP, hidden_size):
+                 cond_dim, k, s, p, map_num, hidden_size):
         super(CLIP_Adapter, self).__init__()
         self.CLIP_ch = CLIP_ch
         self.FBlocks = nn.ModuleList([])
@@ -17,31 +17,16 @@ class CLIP_Adapter(nn.Module):
             self.FBlocks.append(M_Block_RAT(out_ch, mid_ch, out_ch, cond_dim, k, s, p, hidden_size))
             
         self.conv_fuse = nn.Conv2d(out_ch, CLIP_ch, 5, 1, 2)
-        # self.toclip = nn.Sequential(
-        #     nn.ConvTranspose2d(512, 256, 3, 2, 1, 1),
-        #     nn.BatchNorm2d(256),
-        #     nn.LeakyReLU(0.2, inplace=True),
-        #     nn.ConvTranspose2d(256, 128, 3, 2, 1, 1),
-        #     nn.BatchNorm2d(128),
-        #     nn.LeakyReLU(0.2, inplace=True),
-        #     nn.ConvTranspose2d(128, 64, 3, 2, 1, 1),
-        #     nn.BatchNorm2d(64),
-        #     nn.Sigmoid(),
-        # )
-        # self.CLIP = CLIP
         self.conv = nn.Conv2d(512, G_ch, 5, 1, 2)
 
     def forward(self,out,c):
         for FBlock in self.FBlocks:
             out = FBlock(out,c)
         fuse_feat = self.conv_fuse(out)
-        # in_feat = self.toclip(fuse_feat)
-        # map_feat = self.CLIP.encode_image(in_feat, gen=True)
-        # return self.conv(fuse_feat+0.1*map_feat)
         return self.conv(fuse_feat)
 
 class NetG(nn.Module):
-    def __init__(self, ngf, nz, cond_dim, imsize, CLIP):
+    def __init__(self, ngf, nz, cond_dim, imsize):
         super(NetG, self).__init__()
         self.ngf = ngf
         # build CLIP Mapper
@@ -50,8 +35,7 @@ class NetG(nn.Module):
         self.fc_code = nn.Linear(nz, self.code_sz*self.code_sz*self.code_ch)
         self.mapping = CLIP_Adapter(self.code_ch, self.mid_ch, 
                                     self.code_ch, ngf*8, self.CLIP_ch, 
-                                    cond_dim+nz, 3, 1, 1, 4, 
-                                    CLIP, hidden_size=64
+                                    cond_dim+nz, 3, 1, 1, 4, hidden_size=64
                                     )
         # build GBlocks
         self.GBlocks = nn.ModuleList([])
@@ -125,9 +109,11 @@ class NetC(nn.Module):
         super(NetC, self).__init__()
         self.cond_dim = cond_dim
         self.joint_conv = nn.Sequential(
-            nn.Conv2d(512+512, 128, 4, 1, 0, bias=False),
+            nn.Conv2d(512+512, 512, 2, 1, 0, bias=False),
             nn.LeakyReLU(0.2, inplace=True),
-            nn.Conv2d(128, 1, 4, 1, 0, bias=False),
+            nn.Conv2d(512, 256, 4, 1, 0, bias=False),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Conv2d(256, 1, 4, 1, 0, bias=False),
         )
 
     def forward(self, out, cond):
@@ -199,8 +185,8 @@ class G_Block(nn.Module):
         self.learnable_sc = in_ch != out_ch 
         self.c1 = Conv_shuffle(in_ch, out_ch, 3, 1, 1)
         self.c2 = Conv_shuffle(out_ch, out_ch, 3, 1, 1)
-        self.fuse1 = DFBLK(cond_dim, in_ch)
-        self.fuse2 = DFBLK(cond_dim, out_ch)
+        self.fuse1 = DFBLK_rnn(cond_dim, in_ch, 64)
+        self.fuse2 = DFBLK_rnn(cond_dim, out_ch, 64)
         if self.learnable_sc:
             self.c_sc = nn.Conv2d(in_ch,out_ch, 1, stride=1, padding=0)
 
@@ -411,7 +397,3 @@ class Conv_shuffle(nn.Module):
 
     def forward(self, x):
         return self.se(self.act(self.bn(self.conv(x))))
-    
-    # def fuseforward(self, x):
-    #     return self.se(self.act(self.conv(x)))
-    

@@ -840,11 +840,11 @@ class FastViT(nn.Module):
         x = self.patch_embed(x)
         return x
 
-    def forward_tokens(self, x: torch.Tensor, gen=False) -> torch.Tensor:
+    def forward_tokens(self, x: torch.TensorType) -> torch.Tensor:
         features = []
         selfeats = [1, 3, 5, 7]
+        
         for i, block in enumerate(self.network):
-            # print(x.min().item(), x.max().item())
             x = block(x)
             if i in selfeats:
                 features.append(x)
@@ -852,25 +852,18 @@ class FastViT(nn.Module):
         return features, x
 
     def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
-        gen = kwargs.get('gen', False)
 
         # input embedding
-        if not gen:
-            x = self.forward_embeddings(x)
-        else:
-            x = self.patch_embed[2](x)
+        x = self.forward_embeddings(x)
 
         # through backbone
-        f, x = self.forward_tokens(x, gen)
+        f, x = self.forward_tokens(x)
 
         # for image classification
-        if not gen:
-            x = self.conv_exp(x)
-            cls_out = self.head(x)
-        else:
-            cls_out = x
+        x = self.conv_exp(x)
+        cls_out = self.head(x)
 
-        if not kwargs.get('patch', False) and not gen:
+        if not kwargs.get('patch', False):
             cls_out = nn.functional.avg_pool2d(cls_out, 8).squeeze(-1).squeeze(-1)
 
         if kwargs.get('features', False):

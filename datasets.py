@@ -1,15 +1,11 @@
 import os
+import glob
 from PIL import Image
 from torch.utils.data import Dataset
 
 class ImageSet(Dataset):
     def __init__(self, dir, transform=None):
-        self.paths = [
-            os.path.join(root, name)
-            for root, dirs, files in os.walk(dir)
-            for name in files
-            if name.lower().endswith((".png", ".jpg", ".jpeg"))
-        ]
+        self.paths = [f for f in glob.glob(os.path.join(dir, '**/*'), recursive=True) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
         self.transform = transform
     
     def __len__(self):

@@ -11,7 +11,7 @@ import time
 import wandb
 
 import mobileclip
-from RATLIP import NetG, NetC, NetD
+from PAGLIP import NetG, NetC, NetD
 from datasets import ImageSet
 
 torch.backends.cudnn.benchmark = True
@@ -21,13 +21,14 @@ dtype = torch.float32
 
 # Model Params
 imsize = 256
-zdim = 100
+zdim = 1
 cdim = 512
 
 # Training Params
-batchsize = 8
+batchsize = 32
 epochs = 100
 loadpt = -1
+stats = True
 
 clip, _, preprocess = mobileclip.create_model_and_transforms(f'mobileclip_s0', pretrained=f'./models/mobileclip_s0.pt')
 clip = clip.to(device, dtype=dtype)
@@ -47,60 +48,65 @@ tform = T.Compose([
     T.ToDtype(dtype, scale=True)
 ])
 
+print("Loading Dataset...")
 dataset = ImageSet("C:/Datasets/Imagenet/data/train", tform)
 dataloader = DataLoader(dataset, batch_size=batchsize, shuffle=True, pin_memory=True)
+print("Dataset Loaded")
 
-netG = torch.compile(NetG(64, zdim, cdim, imsize, clip).to(device, dtype=dtype))
-netD = torch.compile(NetD().to(device, dtype=dtype))
-netC = torch.compile(NetC(cdim).to(device, dtype=dtype))
+netG = NetG(32, zdim, cdim, imsize).to(device, dtype=dtype)
+# netD = NetD().to(device, dtype=dtype)
+# netC = NetC(cdim).to(device, dtype=dtype)
 
-if loadpt > -1:
-    netG.load_state_dict(torch.load(f'./models/netG_{loadpt}.pth').state_dict())
-    netD.load_state_dict(torch.load(f'./models/netD_{loadpt}.pth').state_dict())
-    netC.load_state_dict(torch.load(f'./models/netC_{loadpt}.pth').state_dict())
+# if loadpt > -1:
+#     netG.load_state_dict(torch.load(f'./models/netG_{loadpt}.pth').state_dict())
+#     netD.load_state_dict(torch.load(f'./models/netD_{loadpt}.pth').state_dict())
+#     netC.load_state_dict(torch.load(f'./models/netC_{loadpt}.pth').state_dict())
 
 gparams = np.sum([p.numel() for p in netG.parameters()]).item()/10**6
-dparams = np.sum([p.numel() for p in netD.parameters()]).item()/10**6
-cparams = np.sum([p.numel() for p in netC.parameters()]).item()/10**6
+# dparams = np.sum([p.numel() for p in netD.parameters()]).item()/10**6
+# cparams = np.sum([p.numel() for p in netC.parameters()]).item()/10**6
 
-wandb.init(
-    project = 'PAGLIP',
-    config = {
-        'gparams': gparams,
-        'dparams': dparams,
-        'cparams': cparams,
-        'batchsize': batchsize,
-    }
-)
+if stats:
+    wandb.init(
+        project = 'PAGLIP',
+        config = {
+            'gparams': gparams,
+            # 'dparams': dparams,
+            # 'cparams': cparams,
+            'batchsize': batchsize,
+        }
+    )
 
 print("G:", gparams)
-print("D:", dparams)
-print("C:", cparams)
+# print("D:", dparams)
+# print("C:", cparams)
 
 optimizerG = optim.NAdam(netG.parameters(), lr=0.0001, betas=(0.0, 0.9))
-optimizerD = optim.NAdam(list(netD.parameters()) + list(netC.parameters()), lr=0.0004, betas=(0.0, 0.9))
+# optimizerD = optim.NAdam(list(netD.parameters()) + list(netC.parameters()), lr=0.0004, betas=(0.0, 0.9))
 scalerG = torch.cuda.amp.GradScaler()
-scalerD = torch.cuda.amp.GradScaler()
+# scalerD = torch.cuda.amp.GradScaler()
+
+goose = nn.MSELoss()
 
 tnoise = torch.randn(1, zdim).to(device)
 tembed = clip.encode_image(preprocess(Image.open("./dogcat.jpg").convert('RGB')).cuda().unsqueeze(0))
 
-def MAGP(img, sent, out, scaler):
-    grads = torch.autograd.grad(outputs=scaler.scale(out),
-                            inputs=(img, sent),
-                            grad_outputs=torch.ones_like(out),
-                            retain_graph=True,
-                            create_graph=True,
-                            only_inputs=True)
-    inv_scale = 1./(scaler.get_scale()+float("1e-8"))
-    grads = [grad * inv_scale for grad in grads]
-    with torch.cuda.amp.autocast():
-        grad0 = grads[0].view(grads[0].size(0), -1)
-        grad1 = grads[1].view(grads[1].size(0), -1)
-        grad = torch.cat((grad0,grad1),dim=1)
-        grad_l2norm = torch.sqrt(torch.sum(grad ** 2, dim=1))
-        d_loss_gp =  2.0 * torch.mean((grad_l2norm) ** 6)
-    return d_loss_gp
+# def MAGP(img, sent, out, scaler):
+#     grads = torch.autograd.grad(outputs=scaler.scale(out),
+#                             inputs=(img, sent),
+#                             grad_outputs=torch.ones_like(out),
+#                             retain_graph=True,
+#                             create_graph=True,
+#                             only_inputs=True)
+#     inv_scale = 1./(scaler.get_scale()+float("1e-8"))
+#     grads = [grad * inv_scale for grad in grads]
+#     with torch.cuda.amp.autocast():
+#         grad0 = grads[0].view(grads[0].size(0), -1)
+#         grad1 = grads[1].view(grads[1].size(0), -1)
+#         grad = torch.cat((grad0,grad1),dim=1)
+#         grad_l2norm = torch.sqrt(torch.sum(grad ** 2, dim=1))
+#         d_loss_gp =  2.0 * torch.mean((grad_l2norm) ** 6)
+#     return d_loss_gp
 
 for epoch in range(epochs):
     for i, images in enumerate(dataloader):
@@ -109,68 +115,70 @@ for epoch in range(epochs):
         images = images.to(device, dtype=dtype)
         
         # Train D
-        optimizerD.zero_grad()
+        # optimizerD.zero_grad()
         with torch.cuda.amp.autocast():
             rfeats, rembeds = clip.encode_image(images, features=True)
-            rembeds.requires_grad = True
+            # rembeds.requires_grad = True
 
-            rexfts, pfeats = netD(rfeats)
-            closs = netC(rexfts, rembeds)
-            rloss = torch.mean(F.relu(1. - closs))
+            # rexfts, pfeats = netD(rfeats)
+            # closs = netC(rexfts, rembeds)
+            # rloss = torch.mean(F.relu(1. - closs))
 
-            membeds = torch.cat((rembeds[1:], rembeds[0:1]), dim=0).detach()
-            mloss = torch.mean(F.relu(1. + netC(rexfts, membeds)))
+            # membeds = torch.cat((rembeds[1:], rembeds[0:1]), dim=0).detach()
+            # mloss = torch.mean(F.relu(1. + netC(rexfts, membeds)))
 
             noise = torch.randn(bs, zdim).to(device)
             fake = netG(noise, rembeds)
 
             ffeats, fembeds = clip.encode_image(fake, features=True)
-            fexfts, _ = netD(ffeats)
-            floss = torch.mean(F.relu(1. + netC(fexfts, rembeds)))
+            # fexfts, _ = netD(ffeats)
+            # floss = torch.mean(F.relu(1. + netC(fexfts, rembeds)))
 
-        ploss = MAGP(pfeats, rembeds, closs, scalerD)
+        # ploss = MAGP(pfeats, rembeds, closs, scalerD)
 
-        with torch.cuda.amp.autocast():
-            dloss = rloss + (floss + mloss) / 2.0 + ploss
-        scalerD.scale(dloss).backward(retain_graph=True)
-        scalerD.step(optimizerD)
-        scalerD.update()
-        if scalerD.get_scale() < 64:
-            scalerD.update(16384.0)
+        # with torch.cuda.amp.autocast():
+        #     dloss = ploss + rloss + ((floss + mloss) * 0.5)
+        # scalerD.scale(dloss).backward(retain_graph=True)
+        # scalerD.step(optimizerD)
+        # scalerD.update()
+        # if scalerD.get_scale() < 64:
+        #     scalerD.update(16384.0)
 
         # Train G
         optimizerG.zero_grad()
         with torch.cuda.amp.autocast():
-            fexfts, _ = netD(ffeats)
-            closs = netC(fexfts, rembeds)
+            # fexfts, _ = netD(ffeats)
+            # closs = netC(fexfts, rembeds)
             clipsim = torch.cosine_similarity(fembeds, rembeds).mean()
-            gloss = -closs.mean() - 4.0 * clipsim
+            gloss = goose(fembeds, rembeds) # -closs.mean() - clipsim * 4.0
         scalerG.scale(gloss).backward()
         scalerG.step(optimizerG)
         scalerG.update()
         if scalerG.get_scale() < 64:
             scalerG.update(16384.0)
 
-        wandb.log({
-            'real_loss': rloss,
-            'fake_loss': floss,
-            'mism_loss': mloss,
-            'magp_loss': ploss,
-            'netg_loss': gloss,
-            'netd_loss': dloss,
-            'genr_loss': -closs.mean(),
-            'clip_siml': clipsim
-        })
+        if stats:
+            wandb.log({
+                # 'real_loss': rloss,
+                # 'fake_loss': floss,
+                # 'mism_loss': mloss,
+                # 'magp_loss': ploss,
+                'netg_loss': gloss,
+                # 'netd_loss': dloss,
+                # 'genr_loss': -closs.mean(),
+                'clip_siml': clipsim
+            })
 
-        if clipsim.item() > 0.9:
-            wandb.alert(title='EUREKA!', text='CLIP embedding cosine similarity is above 90%!!!', wait_duration=3600)
+            if clipsim.item() > 0.9:
+                wandb.alert(title='EUREKA!', text='CLIP embedding cosine similarity is above 90%!!!', wait_duration=3600)
         
         if i % 50 == 0:
-            print(f"[Epoch {epoch}/{epochs}] [Batch {i}/{len(dataloader)}] [D loss: {dloss.item()}] [G loss: {gloss.item()}] [CLIP: {clipsim.item()}]")
+            print(f"[Epoch {epoch}/{epochs}] [Batch {i}/{len(dataloader)}] [D loss: dloss.item()] [G loss: {gloss.item()}] [CLIP: {clipsim.item()}]")
             T.ToPILImage()(netG(tnoise, tembed)[0]).save(f"./results/{epoch}-{i}.png")
             torch.save(netG, f"./models/netG_{epoch}.pth")
-            torch.save(netD, f"./models/netD_{epoch}.pth")
-            torch.save(netC, f"./models/netC_{epoch}.pth")
+            # torch.save(netD, f"./models/netD_{epoch}.pth")
+            # torch.save(netC, f"./models/netC_{epoch}.pth")
             t = time.time()
 
-wandb.finish()
+if stats:
+    wandb.finish()
